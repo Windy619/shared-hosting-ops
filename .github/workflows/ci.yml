@@ -1,0 +1,96 @@
+---
+# =============================================================================
+# Controle qualite des scripts d'exploitation.
+#
+# Trois portes, toutes bloquantes. Aucune n'est en `continue-on-error` : un
+# controle qui n'arrete rien ne controle rien - c'est exactement le defaut
+# qu'avait `allow_failure: true` sur le build front du pipeline d'origine.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer ShellCheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Version
+        run: shellcheck --version
+
+      # --severity=style : le niveau le plus strict. Les scripts distants sont
+      # concatenes derriere _lib.sh a l'execution, d'ou les directives
+      # `shellcheck disable=SC2153` qu'ils portent.
+      - name: Analyser tous les scripts
+        run: |
+          mapfile -t files < <(find . -name '*.sh' | sort)
+          printf 'Scripts analyses : %s\n' "${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+          shellcheck --shell=bash --severity=style "${files[@]}"
+
+  yamllint:
+    name: YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer yamllint
+        run: pip install --quiet yamllint
+
+      - name: Analyser les fichiers YAML
+        run: yamllint --strict .
+
+  bats:
+    name: Tests unitaires
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer bats
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
+
+      - name: Lancer la suite
+        run: bats --print-output-on-failure tests/
+
+  makefile:
+    name: Makefile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Verifie que le Makefile s'analyse et que ses cibles s'expansent, sans
+      # jamais ouvrir de connexion SSH.
+      #
+      # `deploy` et `rollback` ne sont pas testes ici : ils recursent via
+      # $(MAKE), ce qui n'a pas pu etre valide hors Linux au moment d'ecrire
+      # ce workflow. A ajouter une fois la CI verte une premiere fois.
+      - name: Analyser les cibles
+        working-directory: laravel-deploy
+        run: |
+          make help
+          for t in db-backup link-www www-audit clean-releases revisions; do
+            echo "--- make -n $t"
+            make -n "$t" > /dev/null
+          done
+
+      - name: Le garde-fou production doit bloquer sans CONFIRM
+        working-directory: laravel-deploy
+        run: |
+          if make rollback 2>/dev/null; then
+            echo "ECHEC : rollback s'est lance sans CONFIRM=yes"
+            exit 1
+          fi
+          echo "OK : le garde-fou bloque."

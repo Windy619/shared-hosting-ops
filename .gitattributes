@@ -1,0 +1,41 @@
+# =============================================================================
+# Fins de ligne
+#
+# Ce depot est edite sous Windows mais tout son contenu s'execute sous Linux.
+# Sans cette regle, avec core.autocrlf=true, la copie de travail recoit des
+# CRLF et les scripts distants partent tels quels dans le tunnel SSH :
+#
+#   cat deploy/remote/_lib.sh | ssh HOTE "bash -s"
+#   bash: ligne 1: $'\r': commande introuvable
+#
+# eol=lf force le LF dans la copie de travail, sur toutes les plateformes,
+# quelle que soit la configuration git locale de la personne qui clone.
+# =============================================================================
+
+*           text=auto eol=lf
+
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.bats      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.mk        text eol=lf
+*.example   text eol=lf
+*.conf      text eol=lf
+Makefile    text eol=lf
+.gitignore  text eol=lf
+.editorconfig text eol=lf
+.yamllint   text eol=lf
+
+# Binaires : aucune conversion, aucune tentative de diff textuel.
+*.png       binary
+*.jpg       binary
+*.gz        binary
+*.zip       binary
+
+# Exclut du paquet d'archive genere par GitHub (Download ZIP / release).
+.github/        export-ignore
+.gitattributes  export-ignore
+.gitignore      export-ignore
+tests/          export-ignore

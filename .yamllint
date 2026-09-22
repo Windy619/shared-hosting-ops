@@ -1,0 +1,23 @@
+---
+# Configuration yamllint.
+# `yamllint --strict .` est une porte bloquante de la CI.
+
+extends: default
+
+rules:
+  # Les pipelines GitLab contiennent des commandes shell longues, qu'il serait
+  # moins lisible de couper. 120 laisse de la marge sans autoriser n'importe quoi.
+  line-length:
+    max: 120
+    allow-non-breakable-words: true
+
+  # `on:` dans un workflow GitHub est interprete comme le booleen `true` par
+  # la specification YAML 1.1. C'est la syntaxe attendue par GitHub.
+  truthy:
+    allowed-values: ['true', 'false', 'on']
+
+  comments:
+    min-spaces-from-content: 1
+
+  document-start:
+    present: true

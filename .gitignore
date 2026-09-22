@@ -1,0 +1,16 @@
+# Configuration locale : contient les vraies adresses, chemins et identifiants.
+# Seuls les fichiers *.example sont versionnes.
+laravel-deploy/config.mk
+docker-backup/docker-backup.conf
+aide/aide-report.conf
+
+# Artefacts de build
+*.tar.gz
+*.zip
+node_modules/
+vendor/
+
+# Divers
+.DS_Store
+*.swp
+*.log

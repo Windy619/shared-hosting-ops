@@ -1,0 +1,427 @@
+---
+# =============================================================================
+# Pipeline de deploiement Laravel - modele Capistrano
+#
+#   Structure : https://capistranorb.com/documentation/getting-started/structure/
+#   Flow      : https://capistranorb.com/documentation/getting-started/flow/
+#
+#   <projet>/
+#   |-- current -> releases/20260917120000-1234   symlink, bascule en fin de deploy
+#   |-- releases/                                 les KEEP_RELEASES dernieres, completes
+#   |-- shared/                                   linked_files + linked_dirs
+#   |-- backup/                                   dumps SQL (avant migrations)
+#   `-- revisions.log                             qui a deploye quoi, quand
+#
+#   Ecart assume vs Capistrano : pas de repo/ sur le serveur. Le CI construit
+#   un artefact et le livre ; le serveur n'a ni git ni acces au depot.
+#
+# Workflow : feature/* -> develop -> staging -> main -> tag v* -> production
+#
+# -----------------------------------------------------------------------------
+# VARIABLES CI/CD A DEFINIR DANS GITLAB (Settings > CI/CD > Variables)
+#   SSH_PRIVATE_KEY   cle privee de deploiement      [masquee, protegee]
+#   SSH_USER          utilisateur SSH                 [protegee]
+#   SSH_HOST          hote SSH                        [protegee]
+#   SSH_PORT          port SSH                        [protegee]
+#   SSH_KNOWN_HOSTS   sortie de `ssh-keyscan -p <port> <hote>`
+#
+#   Utilisez de preference une cle DISTINCTE par environnement, limitee aux
+#   branches/tags proteges : une cle unique fait d'un acces develop un acces
+#   production.
+# =============================================================================
+
+stages:
+  - build
+  - test
+  - deploy
+  - rollback
+
+variables:
+  # --- Identite du projet (aucune donnee client dans ce fichier) -------------
+  BASE_DOMAIN: "example.com"
+  APP_SLUG: "app"
+
+  # --- Binaires serveur -----------------------------------------------------
+  PHP_BIN: "/opt/cpanel/ea-php83/root/usr/bin/php"
+  COMPOSER_BIN: "/opt/cpanel/composer/bin/composer"
+
+  # --- Deploiement ----------------------------------------------------------
+  KEEP_RELEASES: "5"           # releases conservees (rollback possible sur chacune)
+  COMPOSER_FLAGS: "--no-dev"   # surcharge a "" pour un env qui garde les dev-deps
+  DB_BACKUP: "1"               # dump SQL avant migrations
+  ENABLE_CONFIG_CACHE: "0"     # 1 seulement si env() n'est jamais appele hors config/
+
+  # --- Divers ---------------------------------------------------------------
+  SSH_OPTS: "-o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=15"
+  GIT_DEPTH: "20"
+  NODE_ENV: "production"
+
+# =============================================================================
+# FRAGMENTS REUTILISABLES
+# =============================================================================
+
+# --- Preparation SSH ---------------------------------------------------------
+# Image alpine (~10 Mo) au lieu d'une image PHP QA (~1 Go) : ces jobs n'ont
+# besoin que d'un client SSH. Onze jobs x ~1 Go de pull en moins par pipeline.
+.ssh_setup:
+  script:
+    - apk add --no-cache openssh-client tar gzip curl >/dev/null
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - |
+      if [ -z "${SSH_KNOWN_HOSTS:-}" ]; then
+        echo "ERREUR : la variable CI SSH_KNOWN_HOSTS est absente."
+        echo "Generez-la une seule fois, depuis un poste de confiance :"
+        echo "    ssh-keyscan -p <port> <hote>"
+        echo "puis collez la sortie dans Settings > CI/CD > Variables."
+        exit 1
+      fi
+    # Cle d'hote epinglee : sans cela (StrictHostKeyChecking=no), un
+    # detournement reseau recupere l'archive du projet et la cle de deploiement.
+    - printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+    - chmod 600 ~/.ssh/known_hosts
+    - eval "$(ssh-agent -s)" >/dev/null
+    - printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add - >/dev/null
+    - echo "SSH pret."
+
+# --- Etapes de deploiement ---------------------------------------------------
+.deploy_steps:
+  script:
+    - export PROJECT_DIR="public_html/${DOMAIN}"
+    - export RELEASE_NAME="$(date -u +%Y%m%d%H%M%S)-${CI_PIPELINE_ID}"
+    - export ARCHIVE="${CI_COMMIT_SHA}.tar.gz"
+    # L'archive est ecrite HORS du repertoire archive : la creer dedans
+    # modifiait la mtime de "." pendant que tar le lisait, d'ou l'avertissement
+    # "file changed as we read it" et un code retour 1 qui echouait le job.
+    - export ARCHIVE_PATH="${TMPDIR:-/tmp}/${ARCHIVE}"
+    - export DEPLOYER="${GITLAB_USER_LOGIN:-ci}"
+    - export REVISION="${CI_COMMIT_SHORT_SHA}"
+    - echo "Deploiement de $REVISION sur $ENV_NAME ($DOMAIN) - release $RELEASE_NAME"
+
+    # --- deploy:check : on valide AVANT de transferer quoi que ce soit -------
+    - |
+      cat deploy/remote/_lib.sh deploy/remote/check.sh \
+        | ssh $SSH_OPTS -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "PROJECT_DIR='$PROJECT_DIR' PHP_BIN='$PHP_BIN' COMPOSER_BIN='$COMPOSER_BIN' \
+             KEEP_RELEASES='$KEEP_RELEASES' bash -s"
+
+    # --- Archive ------------------------------------------------------------
+    # tar plutot que zip : permissions et liens symboliques preserves.
+    # "*.git*" de l'ancienne version excluait aussi assets/logo.gitlab.svg :
+    # les motifs sont desormais explicites. ".env*" couvre les .env.backup
+    # laisses a la racine, et "*.tar.gz" toute archive oubliee par un run
+    # precedent.
+    - |
+      tar -czf "$ARCHIVE_PATH" \
+        --exclude=./.git \
+        --exclude=./.gitignore \
+        --exclude=./.gitlab-ci.yml \
+        --exclude=./deploy \
+        --exclude=./node_modules \
+        --exclude=./vendor \
+        --exclude=./tests \
+        --exclude=./storage \
+        --exclude='./.env*' \
+        --exclude='./*.tar.gz' \
+        .
+    - echo "Archive $(du -h "$ARCHIVE_PATH" | cut -f1)"
+
+    # --- Transfert ----------------------------------------------------------
+    - ssh $SSH_OPTS -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$PROJECT_DIR/releases'"
+    - scp $SSH_OPTS -P "$SSH_PORT" -q "$ARCHIVE_PATH" "$SSH_USER@$SSH_HOST:$PROJECT_DIR/releases/"
+
+    # --- deploy:updating -> deploy:finishing --------------------------------
+    - |
+      cat deploy/remote/_lib.sh deploy/remote/deploy.sh \
+        | ssh $SSH_OPTS -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "PROJECT_DIR='$PROJECT_DIR' RELEASE_NAME='$RELEASE_NAME' ARCHIVE='$ARCHIVE' \
+             PHP_BIN='$PHP_BIN' COMPOSER_BIN='$COMPOSER_BIN' KEEP_RELEASES='$KEEP_RELEASES' \
+             COMPOSER_FLAGS='$COMPOSER_FLAGS' MIGRATE_CMD='$MIGRATE_CMD' \
+             ENABLE_CONFIG_CACHE='$ENABLE_CONFIG_CACHE' DB_BACKUP='$DB_BACKUP' \
+             DEPLOYER='$DEPLOYER' REVISION='$REVISION' bash -s"
+
+    # --- Controle final -----------------------------------------------------
+    # Un echo de fin ne prouve rien : on interroge le site reellement.
+    - |
+      CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || echo 000)
+      echo "HTTP $CODE sur https://$DOMAIN"
+      case "$CODE" in
+        200|301|302) echo "Site operationnel." ;;
+        *) echo "REPONSE INATTENDUE - verifiez les logs applicatifs."; exit 1 ;;
+      esac
+
+# --- Etapes de rollback ------------------------------------------------------
+.rollback_steps:
+  script:
+    - export PROJECT_DIR="public_html/${DOMAIN}"
+    - export DEPLOYER="${GITLAB_USER_LOGIN:-ci}"
+    - export REVISION="${CI_COMMIT_SHORT_SHA}"
+    - echo "Rollback sur $ENV_NAME ($DOMAIN)"
+    - |
+      cat deploy/remote/_lib.sh deploy/remote/rollback.sh \
+        | ssh $SSH_OPTS -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "PROJECT_DIR='$PROJECT_DIR' PHP_BIN='$PHP_BIN' COMPOSER_BIN='$COMPOSER_BIN' \
+             KEEP_RELEASES='$KEEP_RELEASES' RESTORE_DB='${RESTORE_DB:-0}' \
+             DEPLOYER='$DEPLOYER' REVISION='$REVISION' bash -s"
+    - |
+      CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || echo 000)
+      echo "HTTP $CODE sur https://$DOMAIN"
+      case "$CODE" in 200|301|302) ;; *) exit 1 ;; esac
+
+# --- Socles de jobs ----------------------------------------------------------
+.deploy_base:
+  image: alpine:3.20
+  stage: deploy
+  # Deux pipelines simultanes sur le meme environnement s'entrelaceraient
+  # (deux composer install, deux bascules) : GitLab les serialise ici.
+  resource_group: $ENV_NAME
+  interruptible: false
+  before_script:
+    - !reference [.ssh_setup, script]
+  script:
+    - !reference [.deploy_steps, script]
+  dependencies:
+    - build_assets
+
+.rollback_base:
+  image: alpine:3.20
+  stage: rollback
+  resource_group: $ENV_NAME
+  interruptible: false
+  before_script:
+    - !reference [.ssh_setup, script]
+  script:
+    - !reference [.rollback_steps, script]
+  dependencies: []
+
+# =============================================================================
+# BUILD
+# =============================================================================
+build_assets:
+  image: node:22-alpine
+  stage: build
+  script:
+    - npm ci --include=dev --no-audit --no-fund
+    - npm run build
+    - test -f public/build/manifest.json
+  # PAS de allow_failure : un build front casse ne doit jamais atteindre un
+  # serveur. Sans manifest.json, Laravel leve "Unable to locate file in Vite
+  # manifest" sur toutes les pages.
+  artifacts:
+    paths:
+      - public/build/
+    # Les deploiements sont manuels : une expiration a 1 heure vidait les
+    # artefacts avant que quiconque ne clique.
+    expire_in: 1 week
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "staging"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+.*$/'
+
+# =============================================================================
+# TEST
+# Chaque job ne s'active que si son fichier de configuration existe :
+# le pipeline reste valide sur un projet qui n'a pas encore l'outil.
+# =============================================================================
+.php_qa:
+  image: jakzal/phpqa:php8.3
+  stage: test
+  before_script:
+    - composer install --no-interaction --no-progress --prefer-dist
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "staging"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+.*$/'
+
+test_phpunit:
+  extends: .php_qa
+  script:
+    - php artisan test --without-tty
+  rules:
+    - exists: [phpunit.xml, phpunit.xml.dist]
+
+test_phpstan:
+  extends: .php_qa
+  script:
+    - phpstan analyse --no-progress
+  rules:
+    - exists: [phpstan.neon, phpstan.neon.dist]
+
+test_pint:
+  extends: .php_qa
+  script:
+    - ./vendor/bin/pint --test
+  rules:
+    - exists: [pint.json]
+
+# =============================================================================
+# DEPLOIEMENTS
+# =============================================================================
+
+# --- DEV : automatique sur develop, dev-deps conservees ----------------------
+deploy_dev:
+  extends: .deploy_base
+  variables:
+    DOMAIN: "dev-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "dev"
+    MIGRATE_CMD: "migrate"
+    COMPOSER_FLAGS: ""
+  environment:
+    name: development
+    url: "https://dev-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+# --- TEST : meme code, equipe differente -------------------------------------
+deploy_test:
+  extends: .deploy_base
+  variables:
+    DOMAIN: "test-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "test"
+    MIGRATE_CMD: "migrate"
+  environment:
+    name: test
+    url: "https://test-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+# --- RESET DEV : destructif, double verrou (manuel + CONFIRM_RESET) ----------
+reset_dev:
+  extends: .deploy_base
+  variables:
+    DOMAIN: "dev-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "dev"
+    MIGRATE_CMD: "migrate:fresh --seed"
+    COMPOSER_FLAGS: ""
+    DB_BACKUP: "1"
+  environment:
+    name: development
+    url: "https://dev-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+  before_script:
+    # migrate:fresh DETRUIT toutes les tables. Ce job voisine avec
+    # deploy_production dans l'interface : un simple "manual" ne suffit pas.
+    - |
+      if [ "${CONFIRM_RESET:-}" != "RESET" ]; then
+        echo "Ce job detruit integralement la base de DEV."
+        echo "Relancez-le avec la variable  CONFIRM_RESET = RESET"
+        exit 1
+      fi
+    - !reference [.ssh_setup, script]
+
+# --- DEMO : validation client, manuel ----------------------------------------
+deploy_demo:
+  extends: .deploy_base
+  variables:
+    DOMAIN: "demo-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "demo"
+    MIGRATE_CMD: "migrate"
+  environment:
+    name: demo
+    url: "https://demo-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "staging"'
+      when: manual
+
+# --- PRE-PROD : validation finale, manuel ------------------------------------
+deploy_preprod:
+  extends: .deploy_base
+  variables:
+    DOMAIN: "preprod-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "preprod"
+    MIGRATE_CMD: "migrate"
+  environment:
+    name: preproduction
+    url: "https://preprod-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+
+# --- PRODUCTION : sur tag v* uniquement, manuel ------------------------------
+deploy_production:
+  extends: .deploy_base
+  variables:
+    DOMAIN: "${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "prod"
+    MIGRATE_CMD: "migrate"
+  environment:
+    name: production
+    url: "https://${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+.*$/'
+      when: manual
+
+# =============================================================================
+# ROLLBACKS
+# Repointage du symlink sur la release precedente : instantane, sans copie.
+# La base n'est pas restauree par defaut ; RESTORE_DB=1 pour la rejouer.
+# =============================================================================
+
+rollback_dev:
+  extends: .rollback_base
+  variables:
+    DOMAIN: "dev-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "dev"
+  environment:
+    name: development
+    url: "https://dev-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+
+rollback_test:
+  extends: .rollback_base
+  variables:
+    DOMAIN: "test-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "test"
+  environment:
+    name: test
+    url: "https://test-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+
+rollback_demo:
+  extends: .rollback_base
+  variables:
+    DOMAIN: "demo-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "demo"
+  environment:
+    name: demo
+    url: "https://demo-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "staging"'
+      when: manual
+
+rollback_preprod:
+  extends: .rollback_base
+  variables:
+    DOMAIN: "preprod-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "preprod"
+  environment:
+    name: preproduction
+    url: "https://preprod-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+
+rollback_production:
+  extends: .rollback_base
+  variables:
+    DOMAIN: "${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "prod"
+  environment:
+    name: production
+    url: "https://${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+.*$/'
+      when: manual

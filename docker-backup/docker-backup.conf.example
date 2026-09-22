@@ -1,0 +1,59 @@
+# =============================================================================
+# docker-backup.conf.example
+#
+# Copiez en /etc/docker-backup.conf (ou a cote du script) et adaptez.
+#   cp docker-backup.conf.example /etc/docker-backup.conf
+#   chmod 600 /etc/docker-backup.conf
+#
+# Toutes les valeurs sont surchargeables par variable d'environnement.
+# =============================================================================
+
+# --- Conteneurs a sauvegarder (separes par des espaces) ----------------------
+CONTAINERS="it-tools"
+
+# --- Emplacement des sauvegardes ---------------------------------------------
+BACKUP_ROOT="/home/docker/container/backup"
+
+# --- Retention par palier ----------------------------------------------------
+KEEP_DAILY=7
+KEEP_WEEKLY=4
+KEEP_MONTHLY=6
+
+# --- Coherence des donnees ---------------------------------------------------
+# Un volume copie pendant que le conteneur ecrit dedans produit une archive
+# incoherente : une base de donnees ainsi sauvegardee ne se restaure pas.
+#   pause : fige le conteneur (SIGSTOP) le temps de l'archivage   [defaut]
+#   stop  : arret propre puis redemarrage (plus sur, plus lent)
+#   none  : aucune precaution (a reserver aux volumes inertes)
+STOP_MODE="pause"
+
+# Commandes jouees avant/apres l'archivage, dans le conteneur. Prioritaire sur
+# STOP_MODE pour les bases de donnees : un dump applicatif vaut mieux qu'un gel.
+#   PRE_BACKUP_CMD="sh -c 'mysqldump -u root -p\"\$MYSQL_ROOT_PASSWORD\" --all-databases > /var/backups/dump.sql'"
+PRE_BACKUP_CMD=""
+POST_BACKUP_CMD=""
+
+# --- Image du conteneur ------------------------------------------------------
+# 0 (defaut) : seuls les volumes sont sauvegardes. L'image est reconstructible
+#              depuis le registre ou le Dockerfile ; la sauvegarder a chaque
+#              cycle multiplie la taille des archives par dix ou plus.
+# 1          : ajoute un docker commit + docker save compresse.
+BACKUP_IMAGE=0
+
+# --- Chiffrement (recommande des que les donnees quittent la machine) --------
+ENCRYPT=0
+GPG_PASSPHRASE_FILE="/etc/docker-backup.passphrase"   # chmod 600, hors sauvegarde
+
+# --- Copie hors-site ---------------------------------------------------------
+# Regle 3-2-1 : des sauvegardes stockees sur la machine sauvegardee ne
+# protegent ni d'un rançongiciel, ni d'une panne disque, ni d'un vol.
+#   RSYNC_DEST="sauvegarde@nas.local:/volumes/docker/"
+RSYNC_DEST=""
+RSYNC_OPTS="-az --delete-after"
+
+# --- Rapport par e-mail ------------------------------------------------------
+MAIL_TO=""
+MAIL_FROM="no-reply@example.com"
+# always : un rapport a chaque execution
+# onerror: uniquement en cas d'echec (recommande pour le quotidien)
+MAIL_WHEN="onerror"

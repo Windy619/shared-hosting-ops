@@ -1,0 +1,66 @@
+# =============================================================================
+# aide-report.conf.example
+#
+# Copiez en /etc/aide-report.conf et adaptez.
+#   cp aide-report.conf.example /etc/aide-report.conf
+#   chmod 600 /etc/aide-report.conf
+#
+# Toutes les valeurs sont surchargeables par variable d'environnement.
+# =============================================================================
+
+# --- Binaire et configuration AIDE -------------------------------------------
+AIDE_BIN="/usr/sbin/aide"
+AIDE_CONF="/etc/aide.conf"
+
+# --- Base de reference --------------------------------------------------------
+AIDE_DB="/var/lib/aide/aide.db.gz"
+AIDE_DB_NEW="/var/lib/aide/aide.db.new.gz"
+
+# --- Emplacements de travail --------------------------------------------------
+REPORT_DIR="/var/lib/aide/reports"
+DB_ARCHIVE_DIR="/var/lib/aide/db-archive"
+
+# --- Retention (en nombre de fichiers) ----------------------------------------
+KEEP_REPORTS=30
+KEEP_DB_ARCHIVES=10
+
+# --- Rapport par e-mail --------------------------------------------------------
+MAIL_TO=""
+MAIL_FROM="no-reply@example.com"
+
+# always   : un rapport a chaque execution (utile pour prouver que le cron tourne)
+# onchange : uniquement en cas de difference ou d'erreur
+MAIL_WHEN="always"
+
+# Le rapport complet liste l'arborescence et les empreintes du serveur : c'est
+# une cartographie utile a un attaquant, et elle circule en clair par SMTP.
+# Seul un extrait est envoye ; le rapport integral reste sur le serveur.
+MAX_REPORT_LINES=200
+
+# =============================================================================
+# NOTE DE CONCEPTION - pourquoi `check` ne met JAMAIS la base a jour
+# =============================================================================
+# Enchainer `--check` puis `--update` dans le meme cron est un anti-pattern
+# connu : une modification malveillante est signalee UNE FOIS, puis la nouvelle
+# base la valide comme etat normal. Le lendemain, tout parait conforme.
+#
+# Ici la mise a jour est une action deliberee et distincte :
+#
+#     aide-report.sh check     # cron quotidien, lecture seule
+#     aide-report.sh update    # apres avoir examine le rapport
+#
+# =============================================================================
+# LIMITE CONNUE - la base vit sur la machine qu'elle surveille
+# =============================================================================
+# Un attaquant disposant des droits root peut regenerer la base et rendre AIDE
+# definitivement aveugle. Trois mesures d'attenuation, par ordre d'efficacite :
+#
+#   1. Copier la base de reference sur un support externe en lecture seule,
+#      ou sur une machine distincte, et la comparer periodiquement.
+#   2. Surveiller l'empreinte SHA256 de la base : elle figure dans chaque
+#      rapport envoye. La boite mail devient ainsi la copie hors-machine.
+#      `check` alerte si l'empreinte a change sans passage par `update`.
+#   3. Rendre la base immuable entre deux mises a jour :
+#        chattr +i /var/lib/aide/aide.db.gz
+#      (`update` la rend modifiable puis la refige automatiquement.)
+USE_CHATTR=0

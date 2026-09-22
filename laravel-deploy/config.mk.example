@@ -1,0 +1,50 @@
+# =============================================================================
+# config.mk.example
+#
+# Copiez ce fichier en `config.mk` et renseignez vos valeurs reelles.
+# `config.mk` est charge automatiquement par le Makefile et doit rester HORS
+# du depot (ajoutez-le a .gitignore) : c'est ce qui permet au Makefile lui-meme
+# de ne contenir aucune donnee d'infrastructure.
+#
+#   cp config.mk.example config.mk
+#   echo 'config.mk' >> .gitignore
+# =============================================================================
+
+# --- Acces serveur -----------------------------------------------------------
+# HOST correspond a une entree de votre ~/.ssh/config, ce qui evite d'ecrire
+# utilisateur, port et cle ici :
+#
+#   Host mon-serveur-prod
+#       HostName    203.0.113.10
+#       User        deploy
+#       Port        22
+#       IdentityFile ~/.ssh/id_ed25519_prod
+#
+HOST          := mon-serveur-prod
+
+# --- Chemins distants --------------------------------------------------------
+PROJECT_PATH  := /srv/app
+WWW_PATH      := $(PROJECT_PATH)/www
+
+# --- Binaires distants -------------------------------------------------------
+PHP_BIN       := /usr/local/bin/php8.3
+COMPOSER_BIN  := /usr/local/bin/composer
+
+# --- Application -------------------------------------------------------------
+APP_URL       := https://example.com
+BRANCH        := main
+
+# --- Options -----------------------------------------------------------------
+# Nombre de releases conservees. Chacune reste complete (code + vendor), donc
+# le rollback est immediat. Compter ~150 Mo par release.
+KEEP_RELEASES := 3
+
+# Multiplexage SSH : une seule connexion reutilisee pour tout le deploiement.
+# Gain notable sur un mutualise lent. Non supporte par OpenSSH pour Windows
+# (fonctionne sous Linux, macOS et WSL).
+SSH_MUX       := 0
+
+# Repertoire ou l'archive de release est construite. Il doit etre EXTERIEUR au
+# projet : tar signale "file changed as we read it" et sort en erreur si on
+# ecrit l'archive dans le repertoire qu'il est en train de lire.
+BUILD_DIR     := /tmp
