@@ -39,6 +39,12 @@ BRANCH        := main
 # le rollback est immediat. Compter ~150 Mo par release.
 KEEP_RELEASES := 3
 
+# Groupes Supervisor relances apres la bascule, separes par des espaces. Un
+# groupe absent de `supervisorctl status` est ignore, cette liste est donc sans
+# risque. Le compte de deploiement doit pouvoir lancer `sudo supervisorctl`
+# sans mot de passe (voir README).
+SUPERVISOR_GROUPS := laravel-worker-prod laravel-reverb-prod
+
 # Multiplexage SSH : une seule connexion reutilisee pour tout le deploiement.
 # Gain notable sur un mutualise lent. Non supporte par OpenSSH pour Windows
 # (fonctionne sous Linux, macOS et WSL).

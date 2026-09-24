@@ -95,6 +95,13 @@ variables:
     - export ARCHIVE_PATH="${TMPDIR:-/tmp}/${ARCHIVE}"
     - export DEPLOYER="${GITLAB_USER_LOGIN:-ci}"
     - export REVISION="${CI_COMMIT_SHORT_SHA}"
+    # Groupes Supervisor candidats : ceux qui ne sont pas declares cote serveur
+    # sont ignores, un projet sans worker ni reverb n'a donc rien a surcharger.
+    # Surchargeable par variable CI.
+    - |
+      DEFAULT_GROUPS="laravel-worker-${ENV_NAME}-${APP_SLUG}"
+      DEFAULT_GROUPS="$DEFAULT_GROUPS laravel-reverb-${ENV_NAME}-${APP_SLUG}"
+      export SUPERVISOR_GROUPS="${SUPERVISOR_GROUPS:-$DEFAULT_GROUPS}"
     - echo "Deploiement de $REVISION sur $ENV_NAME ($DOMAIN) - release $RELEASE_NAME"
 
     # --- deploy:check : on valide AVANT de transferer quoi que ce soit -------
@@ -137,6 +144,7 @@ variables:
              PHP_BIN='$PHP_BIN' COMPOSER_BIN='$COMPOSER_BIN' KEEP_RELEASES='$KEEP_RELEASES' \
              COMPOSER_FLAGS='$COMPOSER_FLAGS' MIGRATE_CMD='$MIGRATE_CMD' \
              ENABLE_CONFIG_CACHE='$ENABLE_CONFIG_CACHE' DB_BACKUP='$DB_BACKUP' \
+             SUPERVISOR_GROUPS='$SUPERVISOR_GROUPS' \
              DEPLOYER='$DEPLOYER' REVISION='$REVISION' bash -s"
 
     # --- Controle final -----------------------------------------------------
@@ -155,12 +163,20 @@ variables:
     - export PROJECT_DIR="public_html/${DOMAIN}"
     - export DEPLOYER="${GITLAB_USER_LOGIN:-ci}"
     - export REVISION="${CI_COMMIT_SHORT_SHA}"
+    # Groupes Supervisor candidats : ceux qui ne sont pas declares cote serveur
+    # sont ignores, un projet sans worker ni reverb n'a donc rien a surcharger.
+    # Surchargeable par variable CI.
+    - |
+      DEFAULT_GROUPS="laravel-worker-${ENV_NAME}-${APP_SLUG}"
+      DEFAULT_GROUPS="$DEFAULT_GROUPS laravel-reverb-${ENV_NAME}-${APP_SLUG}"
+      export SUPERVISOR_GROUPS="${SUPERVISOR_GROUPS:-$DEFAULT_GROUPS}"
     - echo "Rollback sur $ENV_NAME ($DOMAIN)"
     - |
       cat deploy/remote/_lib.sh deploy/remote/rollback.sh \
         | ssh $SSH_OPTS -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
             "PROJECT_DIR='$PROJECT_DIR' PHP_BIN='$PHP_BIN' COMPOSER_BIN='$COMPOSER_BIN' \
              KEEP_RELEASES='$KEEP_RELEASES' RESTORE_DB='${RESTORE_DB:-0}' \
+             SUPERVISOR_GROUPS='$SUPERVISOR_GROUPS' \
              DEPLOYER='$DEPLOYER' REVISION='$REVISION' bash -s"
     - |
       CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || echo 000)
