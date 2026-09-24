@@ -1,6 +1,6 @@
 # Ops toolkit - déploiement et supervision sur hébergement contraint
 
-[![CI](https://github.com/Windy619/shared-hosting-ops/actions/workflows/ci.yml/badge.svg)](https://github.com/Windy619/shared-hosting-ops/actions/workflows/ci.yml)
+[![pipeline](https://gitlab.com/windy6191/shared-hosting-ops/badges/main/pipeline.svg)](https://gitlab.com/windy6191/shared-hosting-ops/-/pipelines)
 
 Outils d'exploitation pour des environnements où les solutions habituelles ne
 sont pas disponibles : mutualisés cPanel ou AmenPanel, serveurs clients sans
