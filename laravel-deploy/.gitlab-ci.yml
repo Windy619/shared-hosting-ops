@@ -216,6 +216,14 @@ build_assets:
   image: node:22-alpine
   stage: build
   script:
+    # Un projet sans front n'a pas de package.json. Le job reste cree, sans
+    # quoi le `dependencies` des jobs de deploiement porterait sur un job
+    # absent du pipeline ; il sort simplement sans rien construire.
+    - |
+      if [ ! -f package.json ]; then
+        echo "Pas de package.json : ce projet n'a pas de build front."
+        exit 0
+      fi
     - npm ci --include=dev --no-audit --no-fund
     - npm run build
     - test -f public/build/manifest.json
