@@ -35,6 +35,10 @@ BRANCH        ?= main
 KEEP_RELEASES ?= 3
 SSH_MUX       ?= 0
 
+# Groupes Supervisor relances en fin de deploiement, separes par des espaces.
+# Vide : les workers ne sont pas touches.
+SUPERVISOR_GROUPS ?=
+
 # --- Interrupteurs de deploiement --------------------------------------------
 MIGRATE       ?= 1
 DB_BACKUP     ?= 1
@@ -75,7 +79,8 @@ SCP := scp -o ConnectTimeout=15 $(SSH_MUX_OPTS)
 REMOTE_ENV := PROJECT_DIR='$(PROJECT_PATH)' PHP_BIN='$(PHP_BIN)' \
               COMPOSER_BIN='$(COMPOSER_BIN)' KEEP_RELEASES='$(KEEP_RELEASES)' \
               LINKED_FILES_MAP='$(LINKED_FILES_MAP)' LINKED_DIRS_MAP='$(LINKED_DIRS_MAP)' \
-              WWW_PATH='$(WWW_PATH)' DEPLOYER='$(DEPLOYER)' REVISION='$(REVISION)'
+              WWW_PATH='$(WWW_PATH)' DEPLOYER='$(DEPLOYER)' REVISION='$(REVISION)' \
+              SUPERVISOR_GROUPS='$(SUPERVISOR_GROUPS)'
 
 # Envoie _lib.sh + <script> au serveur par stdin. Aucun echappement imbrique :
 # les parametres passent par variables d'environnement.
