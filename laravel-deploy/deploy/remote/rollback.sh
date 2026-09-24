@@ -46,6 +46,7 @@ cd "$CURRENT_LINK" || die "current inaccessible apres bascule"
 "$PHP_BIN" artisan optimize:clear
 "$PHP_BIN" artisan view:cache    || warn "view:cache ignore"
 "$PHP_BIN" artisan queue:restart || warn "queue:restart ignore"
+restart_workers
 
 maintenance_off
 ok "site remis en ligne"

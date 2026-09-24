@@ -178,6 +178,48 @@ maintenance_off() {
     || die "artisan up a echoue : le site reste en maintenance, intervention requise"
 }
 
+# --- Workers -----------------------------------------------------------------
+# `artisan queue:restart` est un signal cooperatif : le worker sort en 0 en fin
+# de job, et une config Supervisor en `autorestart=unexpected` considere cette
+# sortie comme attendue, donc ne le relance jamais. Reverb, lui, n'ecoute meme
+# pas ce signal. D'ou ce redemarrage explicite, par groupe Supervisor.
+#
+# SUPERVISOR_GROUPS vide : le helper ne fait rien. Un serveur sans worker ne
+# doit pas voir son deploiement changer de comportement.
+restart_workers() {
+  [ -n "${SUPERVISOR_GROUPS:-}" ] || return 0
+
+  if ! command -v supervisorctl >/dev/null 2>&1; then
+    log "supervisorctl absent : ce serveur n'heberge aucun worker"
+    return 0
+  fi
+
+  # Les groupes demandes sont des candidats, pas une verite : un projet peut
+  # n'avoir ni worker ni reverb. On confronte la liste a l'etat reel plutot que
+  # d'alerter sur des groupes qui n'ont jamais existe. Une ligne de `status`
+  # vaut "groupe:programme_00   RUNNING   pid ...", d'ou la coupe au ':'.
+  local declared
+  declared="$(sudo supervisorctl status 2>/dev/null | awk -F'[: ]' '{print $1}' | sort -u || true)"
+  if [ -z "$declared" ]; then
+    warn "supervisor : etat illisible (sudo ou socket), aucun groupe relance"
+    return 0
+  fi
+
+  local group
+  # shellcheck disable=SC2086  # SUPERVISOR_GROUPS liste plusieurs groupes
+  for group in $SUPERVISOR_GROUPS; do
+    if ! printf '%s' "$declared" | grep -qxF "$group"; then
+      log "supervisor : $group non declare, ignore"
+      continue
+    fi
+    if sudo supervisorctl restart "$group:*" >/dev/null 2>&1; then
+      ok "supervisor : $group relance"
+    else
+      warn "supervisor : echec de  sudo supervisorctl restart $group:*"
+    fi
+  done
+}
+
 # --- Sauvegarde SQL ----------------------------------------------------------
 db_backup() {
   local name user host port pass f

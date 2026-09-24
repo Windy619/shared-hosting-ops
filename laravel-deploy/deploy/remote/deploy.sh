@@ -113,9 +113,11 @@ else
   log "config:cache / route:cache desactives (ENABLE_CONFIG_CACHE=1 pour les activer)"
 fi
 
-# queue:restart demande aux workers de s'arreter proprement en fin de job ;
-# supervisor les relance avec le nouveau code. Aucun sudo necessaire.
+# Les deux sont complementaires : queue:restart demande aux workers de finir
+# leur job en cours, restart_workers garantit qu'ils repartent sur le nouveau
+# code au lieu de dependre de la politique autorestart de Supervisor.
 "$PHP_BIN" artisan queue:restart || warn "queue:restart ignore"
+restart_workers
 
 maintenance_off
 ok "site remis en ligne"
