@@ -109,11 +109,25 @@ silencieusement reviendrait à parier sur le code applicatif.
 `view:cache` est sans risque et toujours appliqué. Les deux autres s'activent
 par `ENABLE_CONFIG_CACHE=1`, en connaissance de cause.
 
-### `artisan queue:restart` plutôt que `sudo supervisorctl`
+### Le redémarrage des workers est explicite, pas supposé
 
-Le redémarrage des workers ne justifie pas d'accorder un `sudo` sans mot de passe
-au compte de déploiement. `queue:restart` demande aux workers de s'arrêter
-proprement en fin de job ; Supervisor les relance avec le nouveau code.
+`queue:restart` est un signal coopératif : le worker sort en code 0 à la fin de
+son job courant. Une configuration Supervisor en `autorestart=unexpected`, qui
+est la valeur par défaut, considère cette sortie comme attendue et ne relance
+rien. Les workers restent alors éteints pendant que le déploiement s'annonce
+réussi. Un serveur Reverb, lui, n'écoute même pas ce signal.
+
+`SUPERVISOR_GROUPS` liste des groupes candidats, pas une vérité. Le déploiement
+interroge d'abord `supervisorctl status` et ne relance que ceux qui y sont
+déclarés : le même pipeline sert un projet avec workers et Reverb, un projet
+avec workers seuls, et un projet qui n'en a aucun. Variable vide, rien n'est
+interrogé.
+
+Le `sudo` se limite à cette seule commande, côté serveur :
+
+```
+deploy ALL=(root) NOPASSWD: /usr/bin/supervisorctl status, /usr/bin/supervisorctl restart *
+```
 
 ### Le dump SQL est validé, pas seulement produit
 
