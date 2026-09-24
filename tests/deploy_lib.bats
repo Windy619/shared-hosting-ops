@@ -140,3 +140,108 @@ teardown() {
   log_revision "rollback" "20251231000000"
   [ "$(wc -l < "$REVISIONS_LOG")" -eq 2 ]
 }
+
+# --- Redemarrage des workers -------------------------------------------------
+#
+# supervisorctl n'existe pas sur un runner CI : ces tests verifient la commande
+# qui AURAIT ete lancee, jamais son effet. Le faux sudo repond a `status` avec
+# l'etat qu'on lui donne, et journalise tout le reste.
+
+stub_supervisor() {
+  mkdir -p "$TMP/bin"
+  export SUDO_LOG="$TMP/sudo.log"
+  export SUDO_RC="${1:-0}"
+  export SUPERVISOR_STATUS="$TMP/status.txt"
+  {
+    echo '#!/usr/bin/env bash'
+    echo 'exit 0'
+  } > "$TMP/bin/supervisorctl"
+  {
+    echo '#!/usr/bin/env bash'
+    echo 'if [ "$2" = "status" ]; then cat "$SUPERVISOR_STATUS"; exit 0; fi'
+    echo 'echo "$*" >> "$SUDO_LOG"'
+    echo 'exit ${SUDO_RC:-0}'
+  } > "$TMP/bin/sudo"
+  chmod +x "$TMP/bin/supervisorctl" "$TMP/bin/sudo"
+  : > "$SUPERVISOR_STATUS"
+  PATH="$TMP/bin:$PATH"
+}
+
+# Declare des groupes dans le faux supervisor, au format de `supervisorctl status`.
+declare_groups() {
+  local g
+  for g in "$@"; do
+    echo "$g:${g}_00   RUNNING   pid 1, uptime 0:10:00" >> "$SUPERVISOR_STATUS"
+  done
+}
+
+@test "restart_workers : sans SUPERVISOR_GROUPS, aucune commande n'est lancee" {
+  stub_supervisor
+  export SUPERVISOR_GROUPS=""
+
+  run restart_workers
+
+  [ "$status" -eq 0 ]
+  [ ! -f "$TMP/sudo.log" ]
+}
+
+@test "restart_workers : un restart par groupe declare" {
+  stub_supervisor
+  declare_groups laravel-worker-prod laravel-reverb-prod
+  export SUPERVISOR_GROUPS="laravel-worker-prod laravel-reverb-prod"
+
+  run restart_workers
+
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$TMP/sudo.log")" -eq 2 ]
+  grep -qxF 'supervisorctl restart laravel-worker-prod:*' "$TMP/sudo.log"
+  grep -qxF 'supervisorctl restart laravel-reverb-prod:*' "$TMP/sudo.log"
+}
+
+@test "restart_workers : un groupe absent de supervisor est ignore, pas relance" {
+  stub_supervisor
+  declare_groups laravel-worker-prod
+  export SUPERVISOR_GROUPS="laravel-worker-prod laravel-reverb-prod"
+
+  run restart_workers
+
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$TMP/sudo.log")" -eq 1 ]
+  grep -qxF 'supervisorctl restart laravel-worker-prod:*' "$TMP/sudo.log"
+  [[ "$output" == *"laravel-reverb-prod non declare"* ]]
+}
+
+@test "restart_workers : un echec supervisorctl n'arrete pas le deploiement" {
+  stub_supervisor 1
+  declare_groups laravel-worker-prod
+  export SUPERVISOR_GROUPS="laravel-worker-prod"
+
+  run restart_workers
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"echec"* ]]
+}
+
+@test "restart_workers : supervisorctl absent, le deploiement continue" {
+  mkdir -p "$TMP/empty"
+  export SUPERVISOR_GROUPS="laravel-worker-prod"
+
+  saved_path="$PATH"
+  PATH="$TMP/empty"
+  run restart_workers
+  PATH="$saved_path"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"supervisorctl absent"* ]]
+}
+
+@test "restart_workers : un etat supervisor illisible est signale" {
+  stub_supervisor
+  export SUPERVISOR_GROUPS="laravel-worker-prod"
+
+  run restart_workers
+
+  [ "$status" -eq 0 ]
+  [ ! -f "$TMP/sudo.log" ]
+  [[ "$output" == *"etat illisible"* ]]
+}
