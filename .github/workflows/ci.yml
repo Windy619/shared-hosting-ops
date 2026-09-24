@@ -1,8 +1,13 @@
 ---
 # =============================================================================
-# Controle qualite des scripts d'exploitation.
+# Controle qualite des scripts d'exploitation, sur le miroir GitHub.
 #
-# Trois portes, toutes bloquantes. Aucune n'est en `continue-on-error` : un
+# La source de verite est GitLab : `.gitlab-ci.yml` a la racine porte les memes
+# portes et c'est lui qui conditionne les merge requests. Ce workflow est un
+# doublon assume, garde pour que le miroir reste lintable et testable seul.
+# Toute porte ajoutee ici doit l'etre aussi dans `.gitlab-ci.yml`.
+#
+# Quatre portes, toutes bloquantes. Aucune n'est en `continue-on-error` : un
 # controle qui n'arrete rien ne controle rien - c'est exactement le defaut
 # qu'avait `allow_failure: true` sur le build front du pipeline d'origine.
 # =============================================================================

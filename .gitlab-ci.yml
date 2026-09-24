@@ -1,0 +1,90 @@
+---
+# =============================================================================
+# Controle qualite des scripts d'exploitation.
+#
+# Quatre portes, toutes bloquantes. Aucune n'est en `allow_failure` : un
+# controle qui n'arrete rien ne controle rien - c'est exactement le defaut
+# qu'avait `allow_failure: true` sur le build front du pipeline d'origine.
+#
+# Ce fichier est le pipeline du depot lui-meme. Celui de laravel-deploy/ est
+# un modele livre aux projets utilisateurs : les deux ne se croisent jamais.
+# =============================================================================
+
+stages:
+  - lint
+  - test
+
+default:
+  image: debian:bookworm-slim
+  interruptible: true
+
+# Un pipeline par merge request, plus les trois branches longues. Pousser une
+# branche de feature sans MR ouverte ne declenche rien : c'est la MR qui est
+# la porte, pas le push.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "staging"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# --severity=style : le niveau le plus strict. Les scripts distants sont
+# concatenes derriere _lib.sh a l'execution, d'ou les directives
+# `shellcheck disable=SC2153` qu'ils portent.
+shellcheck:
+  stage: lint
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq shellcheck
+  script:
+    - shellcheck --version
+    # xargs -a plutot que mapfile : le bloc ne depend pas du shell que le
+    # runner choisit pour l'executer.
+    - |
+      find . -name '*.sh' | sort > /tmp/shell-files.txt
+      printf 'Scripts analyses : %s\n' "$(wc -l < /tmp/shell-files.txt)"
+      sed 's/^/  /' /tmp/shell-files.txt
+      xargs -a /tmp/shell-files.txt shellcheck --shell=bash --severity=style
+
+yamllint:
+  stage: lint
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq yamllint
+  script:
+    - yamllint --strict .
+
+bats:
+  stage: test
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq bats
+  script:
+    - bats --print-output-on-failure tests/
+
+# Verifie que le Makefile s'analyse et que ses cibles s'expansent, sans jamais
+# ouvrir de connexion SSH.
+#
+# `deploy` et `rollback` ne sont pas testes ici : ils recursent via $(MAKE),
+# ce qui n'a pas pu etre valide hors Linux au moment d'ecrire ce pipeline.
+# A ajouter une fois la CI verte une premiere fois.
+makefile:
+  stage: test
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq make mawk
+  script:
+    - cd laravel-deploy
+    - make help
+    - |
+      for t in db-backup link-www www-audit clean-releases revisions; do
+        echo "--- make -n $t"
+        make -n "$t" > /dev/null
+      done
+    - |
+      if make rollback 2>/dev/null; then
+        echo "ECHEC : rollback s'est lance sans CONFIRM=yes"
+        exit 1
+      fi
+      echo "OK : le garde-fou bloque."
