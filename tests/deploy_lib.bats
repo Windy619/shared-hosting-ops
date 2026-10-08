@@ -17,7 +17,7 @@ setup() {
   mkdir -p "$PROJECT_DIR/releases" "$PROJECT_DIR/shared/storage"
   : > "$PROJECT_DIR/shared/.env"
   # shellcheck source=/dev/null
-  source "$(repo_root)/laravel-deploy/deploy/remote/_lib.sh"
+  source "$(repo_root)/recipes/laravel/deploy/remote/_lib.sh"
 }
 
 teardown() {
