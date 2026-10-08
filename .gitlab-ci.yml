@@ -6,7 +6,7 @@
 # controle qui n'arrete rien ne controle rien - c'est exactement le defaut
 # qu'avait `allow_failure: true` sur le build front du pipeline d'origine.
 #
-# Ce fichier est le pipeline du depot lui-meme. Celui de laravel-deploy/ est
+# Ce fichier est le pipeline du depot lui-meme. Celui de recipes/laravel/ est
 # un modele livre aux projets utilisateurs : les deux ne se croisent jamais.
 # =============================================================================
 
@@ -75,7 +75,7 @@ makefile:
     - apt-get update -qq
     - apt-get install -y -qq make mawk
   script:
-    - cd laravel-deploy
+    - cd recipes/laravel
     - make help
     - |
       for t in db-backup link-www www-audit clean-releases revisions; do

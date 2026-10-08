@@ -83,7 +83,7 @@ jobs:
       # $(MAKE), ce qui n'a pas pu etre valide hors Linux au moment d'ecrire
       # ce workflow. A ajouter une fois la CI verte une premiere fois.
       - name: Analyser les cibles
-        working-directory: laravel-deploy
+        working-directory: recipes/laravel
         run: |
           make help
           for t in db-backup link-www www-audit clean-releases revisions; do
@@ -92,7 +92,7 @@ jobs:
           done
 
       - name: Le garde-fou production doit bloquer sans CONFIRM
-        working-directory: laravel-deploy
+        working-directory: recipes/laravel
         run: |
           if make rollback 2>/dev/null; then
             echo "ECHEC : rollback s'est lance sans CONFIRM=yes"
