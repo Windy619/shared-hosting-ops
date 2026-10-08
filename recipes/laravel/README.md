@@ -1,4 +1,4 @@
-# laravel-deploy
+# laravel
 
 Déploiement Laravel sans interruption sur hébergement mutualisé, suivant la
 structure [Capistrano](https://capistranorb.com/documentation/getting-started/structure/),
@@ -17,9 +17,18 @@ les deux dépend de ce que le serveur du client tolère, pas du comportement vou
 └── www/                                 docroot physique, si l'hébergeur l'impose
 ```
 
-## Installation
+## Ce qu'il faut copier dans le projet
 
-Ce dossier est un **miroir** de ce qu'on dépose à la racine du projet Laravel :
+| Fichier d'ici | Où le déposer | Quand |
+|---|---|---|
+| `deploy/remote/*.sh` | `deploy/remote/` du projet | toujours, c'est la logique distante |
+| `.gitlab-ci.yml` | racine du projet | déploiement par pipeline GitLab |
+| `Makefile` | racine du projet | déploiement par Makefile en SSH direct |
+| `config.mk.example` | racine du projet, copié en `config.mk` | avec le Makefile, `config.mk` n'est jamais versionné |
+| `init_server.sh` | rien à copier, s'exécute une fois sur le serveur | première mise en place d'un environnement |
+
+Les deux points d'entrée partagent `deploy/remote/` : ne prendre que l'un des
+deux reste valable, laisser tomber `deploy/` ne l'est jamais.
 
 ```bash
 cp .gitlab-ci.yml Makefile config.mk.example <projet>/
