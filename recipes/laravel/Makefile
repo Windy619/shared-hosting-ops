@@ -33,7 +33,12 @@ COMPOSER_BIN  ?= composer
 APP_URL       ?= https://example.com
 BRANCH        ?= main
 KEEP_RELEASES ?= 3
+KEEP_DUMPS    ?= 10
 SSH_MUX       ?= 0
+
+# Groupes Supervisor relances en fin de deploiement, separes par des espaces.
+# Vide : les workers ne sont pas touches.
+SUPERVISOR_GROUPS ?=
 
 # --- Interrupteurs de deploiement --------------------------------------------
 MIGRATE       ?= 1
@@ -74,8 +79,10 @@ SCP := scp -o ConnectTimeout=15 $(SSH_MUX_OPTS)
 # Variables transmises a tous les scripts distants.
 REMOTE_ENV := PROJECT_DIR='$(PROJECT_PATH)' PHP_BIN='$(PHP_BIN)' \
               COMPOSER_BIN='$(COMPOSER_BIN)' KEEP_RELEASES='$(KEEP_RELEASES)' \
+              KEEP_DUMPS='$(KEEP_DUMPS)' \
               LINKED_FILES_MAP='$(LINKED_FILES_MAP)' LINKED_DIRS_MAP='$(LINKED_DIRS_MAP)' \
-              WWW_PATH='$(WWW_PATH)' DEPLOYER='$(DEPLOYER)' REVISION='$(REVISION)'
+              WWW_PATH='$(WWW_PATH)' DEPLOYER='$(DEPLOYER)' REVISION='$(REVISION)' \
+              SUPERVISOR_GROUPS='$(SUPERVISOR_GROUPS)'
 
 # Envoie _lib.sh + <script> au serveur par stdin. Aucun echappement imbrique :
 # les parametres passent par variables d'environnement.
@@ -104,7 +111,10 @@ help: ## Affiche cette aide
 	@echo ""
 	@echo "Options :"
 	@echo "  MIGRATE=0             ne pas lancer les migrations"
-	@echo "  DB_BACKUP=0           pas de dump SQL avant migration"
+	@echo "  DB_BACKUP=0           pas de dump SQL avant migration (sinon un dump impossible echoue le deploiement)"
+	@echo "  KEEP_DUMPS=10         dumps conserves par prefixe (avant migration, manuel)"
+	@echo "  DUMP=db-....sql.gz    dump a restaurer avec db-restore, le dernier par defaut"
+	@echo "  CONFIRM_RESTORE=RESTORE  second verrou de db-restore"
 	@echo "  ENABLE_CONFIG_CACHE=1 activer config:cache et route:cache"
 	@echo "  CONFIRM=yes           requis pour deploy, rollback et db-restore"
 	@echo "  FORCE=1               regenerer www/index.php et www/.htaccess"
@@ -194,7 +204,7 @@ deploy: guard check-connection build ## Deploie une nouvelle release
 	@echo "Deploiement reussi : $(RELEASE_NAME)"
 
 rollback: guard check-connection ## Revient a la release precedente
-	@$(call remote,rollback.sh,RESTORE_DB='$(RESTORE_DB)')
+	@$(call remote,rollback.sh)
 	@$(call remote,amen-www.sh,MODE='link')
 	@$(MAKE) --no-print-directory health
 
@@ -209,11 +219,11 @@ www-audit: ## Audit du docroot : liens, elements physiques, .php suspects
 	@$(call remote,amen-www.sh,MODE='audit')
 
 # =============================================================================
-db-backup: ## Dump SQL compresse dans backup/
+db-backup: ## Dump SQL manuel compresse dans backup/
 	@$(call remote,db-backup.sh)
 
-db-restore: guard ## Restaure le dernier dump SQL (DESTRUCTIF)
-	@$(call remote,db-restore.sh,CONFIRM_RESTORE='$(CONFIRM_RESTORE)')
+db-restore: guard ## Restaure un dump SQL (DUMP=db-....sql.gz, le dernier par defaut) - DESTRUCTIF
+	@$(call remote,db-restore.sh,CONFIRM_RESTORE='$(CONFIRM_RESTORE)' DUMP='$(DUMP)')
 
 # =============================================================================
 clean-releases: ## Supprime les vieilles releases (garde KEEP_RELEASES dernieres)

@@ -1,6 +1,6 @@
 # Ops toolkit - déploiement et supervision sur hébergement contraint
 
-[![CI](https://github.com/Windy619/shared-hosting-ops/actions/workflows/ci.yml/badge.svg)](https://github.com/Windy619/shared-hosting-ops/actions/workflows/ci.yml)
+[![pipeline](https://gitlab.com/windy6191/shared-hosting-ops/badges/main/pipeline.svg)](https://gitlab.com/windy6191/shared-hosting-ops/-/pipelines)
 
 Outils d'exploitation pour des environnements où les solutions habituelles ne
 sont pas disponibles : mutualisés cPanel ou AmenPanel, serveurs clients sans
@@ -9,7 +9,7 @@ managée - seulement SSH, `make`, `bash` et ce que l'hébergeur veut bien fourni
 
 | Outil | Rôle |
 |---|---|
-| [`laravel-deploy/`](laravel-deploy/) | Déploiement Laravel sans interruption, modèle Capistrano, par pipeline GitLab **ou** par Makefile |
+| [`recipes/laravel/`](recipes/laravel/) | Déploiement Laravel sans interruption, modèle Capistrano, par pipeline GitLab **ou** par Makefile |
 | [`docker-backup/`](docker-backup/) | Sauvegarde de volumes Docker, vérifiée, chiffrable, restaurable |
 | [`aide/`](aide/) | Contrôle d'intégrité AIDE avec cycle de vie explicite de la base de référence |
 
@@ -44,7 +44,7 @@ l'aide - une crontab mal reprise doit se voir.
 
 ## Conformité au modèle Capistrano
 
-`laravel-deploy/` implémente la structure de référence
+`recipes/laravel/` implémente la structure de référence
 ([documentation](https://capistranorb.com/documentation/getting-started/structure/)).
 Les écarts sont assumés et documentés, pas subis :
 
@@ -70,7 +70,7 @@ ouvert. Seules les migrations et la bascule se déroulent en maintenance.
 ## Une logique distante, deux points d'entrée
 
 Le pipeline GitLab et le Makefile partagent **les mêmes scripts** dans
-`laravel-deploy/deploy/remote/`, envoyés au serveur par `ssh 'bash -s'` :
+`recipes/laravel/deploy/remote/`, envoyés au serveur par `ssh 'bash -s'` :
 
 ```
 cat deploy/remote/_lib.sh deploy/remote/deploy.sh \
@@ -113,14 +113,16 @@ automatiquement sauté sur les plateformes qui ne les fournissent pas.
 ## Arborescence
 
 ```
-laravel-deploy/          miroir de ce qu'on dépose à la racine du projet cible
-├── .gitlab-ci.yml
-├── Makefile
-├── config.mk.example
-├── init_server.sh
-└── deploy/remote/*.sh   logique distante partagée
-docker-backup/
-aide/
+recipes/                 une recette de déploiement par techno
+├── README.md            index des technos
+└── laravel/             miroir de ce qu'on dépose dans le projet Laravel
+    ├── .gitlab-ci.yml
+    ├── Makefile
+    ├── config.mk.example
+    ├── init_server.sh
+    └── deploy/remote/*.sh   logique distante partagée
+docker-backup/           outil serveur, pas une recette
+aide/                    outil serveur, pas une recette
 tests/                   suites bats
 ```
 
@@ -132,7 +134,7 @@ Aucune donnée d'infrastructure n'est versionnée. Chaque outil lit un fichier d
 configuration local, ignoré par git, dont seul le modèle `*.example` est suivi :
 
 ```bash
-cp laravel-deploy/config.mk.example        laravel-deploy/config.mk
+cp recipes/laravel/config.mk.example        recipes/laravel/config.mk
 cp docker-backup/docker-backup.conf.example /etc/docker-backup.conf
 cp aide/aide-report.conf.example            /etc/aide-report.conf
 chmod 600 /etc/docker-backup.conf /etc/aide-report.conf

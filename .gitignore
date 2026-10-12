@@ -1,6 +1,6 @@
 # Configuration locale : contient les vraies adresses, chemins et identifiants.
 # Seuls les fichiers *.example sont versionnes.
-laravel-deploy/config.mk
+recipes/laravel/config.mk
 docker-backup/docker-backup.conf
 aide/aide-report.conf
 
