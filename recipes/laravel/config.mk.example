@@ -39,6 +39,11 @@ BRANCH        := main
 # le rollback est immediat. Compter ~150 Mo par release.
 KEEP_RELEASES := 3
 
+# Dumps SQL conserves, par prefixe : ceux d'avant migration et ceux de
+# `make db-backup` ont chacun leur quota. Les dumps de securite pris avant une
+# restauration ne sont jamais elagues.
+KEEP_DUMPS := 10
+
 # Groupes Supervisor relances apres la bascule, separes par des espaces. Un
 # groupe absent de `supervisorctl status` est ignore, cette liste est donc sans
 # risque. Le compte de deploiement doit pouvoir lancer `sudo supervisorctl`

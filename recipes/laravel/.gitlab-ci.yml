@@ -47,6 +47,7 @@ variables:
 
   # --- Deploiement ----------------------------------------------------------
   KEEP_RELEASES: "5"           # releases conservees (rollback possible sur chacune)
+  KEEP_DUMPS: "10"           # dumps conserves par prefixe (avant migration, manuel)
   COMPOSER_FLAGS: "--no-dev"   # surcharge a "" pour un env qui garde les dev-deps
   DB_BACKUP: "1"               # dump SQL avant migrations
   ENABLE_CONFIG_CACHE: "0"     # 1 seulement si env() n'est jamais appele hors config/
@@ -143,6 +144,7 @@ variables:
             "PROJECT_DIR='$PROJECT_DIR' RELEASE_NAME='$RELEASE_NAME' ARCHIVE='$ARCHIVE' \
              PHP_BIN='$PHP_BIN' COMPOSER_BIN='$COMPOSER_BIN' KEEP_RELEASES='$KEEP_RELEASES' \
              COMPOSER_FLAGS='$COMPOSER_FLAGS' MIGRATE_CMD='$MIGRATE_CMD' \
+             KEEP_DUMPS='$KEEP_DUMPS' \
              ENABLE_CONFIG_CACHE='$ENABLE_CONFIG_CACHE' DB_BACKUP='$DB_BACKUP' \
              SUPERVISOR_GROUPS='$SUPERVISOR_GROUPS' \
              DEPLOYER='$DEPLOYER' REVISION='$REVISION' bash -s"
@@ -175,7 +177,7 @@ variables:
       cat deploy/remote/_lib.sh deploy/remote/rollback.sh \
         | ssh $SSH_OPTS -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
             "PROJECT_DIR='$PROJECT_DIR' PHP_BIN='$PHP_BIN' COMPOSER_BIN='$COMPOSER_BIN' \
-             KEEP_RELEASES='$KEEP_RELEASES' RESTORE_DB='${RESTORE_DB:-0}' \
+             KEEP_RELEASES='$KEEP_RELEASES' \
              SUPERVISOR_GROUPS='$SUPERVISOR_GROUPS' \
              DEPLOYER='$DEPLOYER' REVISION='$REVISION' bash -s"
     - |
@@ -208,6 +210,41 @@ variables:
   script:
     - !reference [.rollback_steps, script]
   dependencies: []
+# --- Restauration SQL : destructive, jamais couplee au rollback --------------
+# Manuel + CONFIRM_RESTORE=RESTORE (variable du job). DUMP=db-....sql.gz choisit
+# le fichier, le plus recent des dumps avant migration et manuels par defaut.
+# Un dump de securite de l'etat courant est pris avant l'import.
+.db_restore_base:
+  image: alpine:3.20
+  stage: rollback
+  resource_group: $ENV_NAME
+  interruptible: false
+  before_script:
+    - |
+      if [ "${CONFIRM_RESTORE:-}" != "RESTORE" ]; then
+        echo "Ce job ECRASE la base de $ENV_NAME avec un dump."
+        echo "Relancez-le avec la variable  CONFIRM_RESTORE = RESTORE"
+        echo "(et DUMP = db-....sql.gz pour un dump precis, voir revisions.log)."
+        exit 1
+      fi
+    - !reference [.ssh_setup, script]
+  script:
+    - export PROJECT_DIR="public_html/${DOMAIN}"
+    - export DEPLOYER="${GITLAB_USER_LOGIN:-ci}"
+    - export REVISION="${CI_COMMIT_SHORT_SHA}"
+    - echo "Restauration SQL sur $ENV_NAME ($DOMAIN) ${DUMP:-dernier dump}"
+    - |
+      cat deploy/remote/_lib.sh deploy/remote/db-restore.sh \
+        | ssh $SSH_OPTS -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "PROJECT_DIR='$PROJECT_DIR' PHP_BIN='$PHP_BIN' KEEP_DUMPS='$KEEP_DUMPS' \
+             CONFIRM_RESTORE='$CONFIRM_RESTORE' DUMP='${DUMP:-}' \
+             DEPLOYER='$DEPLOYER' REVISION='$REVISION' bash -s"
+    - |
+      CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || echo 000)
+      echo "HTTP $CODE sur https://$DOMAIN"
+      case "$CODE" in 200|301|302) ;; *) exit 1 ;; esac
+  dependencies: []
+
 
 # =============================================================================
 # BUILD
@@ -387,7 +424,7 @@ deploy_production:
 # =============================================================================
 # ROLLBACKS
 # Repointage du symlink sur la release precedente : instantane, sans copie.
-# La base n'est pas restauree par defaut ; RESTORE_DB=1 pour la rejouer.
+# La base n'est jamais restauree ici : voir les jobs db_restore_*.
 # =============================================================================
 
 rollback_dev:
@@ -440,6 +477,71 @@ rollback_preprod:
 
 rollback_production:
   extends: .rollback_base
+  variables:
+    DOMAIN: "${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "prod"
+  environment:
+    name: production
+    url: "https://${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+.*$/'
+      when: manual
+
+# =============================================================================
+# RESTAURATIONS SQL
+# Un job par environnement, comme les rollbacks. Voir .db_restore_base.
+# =============================================================================
+
+db_restore_dev:
+  extends: .db_restore_base
+  variables:
+    DOMAIN: "dev-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "dev"
+  environment:
+    name: development
+    url: "https://dev-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+
+db_restore_test:
+  extends: .db_restore_base
+  variables:
+    DOMAIN: "test-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "test"
+  environment:
+    name: test
+    url: "https://test-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+
+db_restore_demo:
+  extends: .db_restore_base
+  variables:
+    DOMAIN: "demo-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "demo"
+  environment:
+    name: demo
+    url: "https://demo-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "staging"'
+      when: manual
+
+db_restore_preprod:
+  extends: .db_restore_base
+  variables:
+    DOMAIN: "preprod-${APP_SLUG}.${BASE_DOMAIN}"
+    ENV_NAME: "preprod"
+  environment:
+    name: preproduction
+    url: "https://preprod-${APP_SLUG}.${BASE_DOMAIN}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+
+db_restore_production:
+  extends: .db_restore_base
   variables:
     DOMAIN: "${APP_SLUG}.${BASE_DOMAIN}"
     ENV_NAME: "prod"
