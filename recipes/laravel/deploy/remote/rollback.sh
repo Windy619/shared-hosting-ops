@@ -6,14 +6,12 @@
 # repointer le symlink. Aucune copie, donc une bascule instantanee, et
 # autant de niveaux de retour que de releases conservees.
 #
-# La BASE DE DONNEES n'est jamais restauree automatiquement : rejouer un dump
-# detruirait tout ce qui a ete ecrit depuis. Si la release fautive portait une
-# migration destructrice, relancer avec RESTORE_DB=1 - en connaissance de cause.
+# La BASE DE DONNEES n'est jamais restauree ici : rejouer un dump detruirait
+# tout ce qui a ete ecrit depuis. Code et base se restaurent separement
+# (db-restore.sh), chacun derriere son propre verrou.
 #
 # Concatene apres _lib.sh.
 # =============================================================================
-
-RESTORE_DB="${RESTORE_DB:-0}"
 
 phase "deploy:reverting"
 
@@ -29,11 +27,9 @@ log "release ciblee   : $(basename "$target")"
 
 maintenance_on
 
-if [ "$RESTORE_DB" = "1" ]; then
-  phase "restauration de la base"
-  db_restore_latest
-else
-  log "base non restauree (RESTORE_DB=1 pour la rejouer depuis le dernier dump)"
+log "base non restauree"
+if [ -f "$DB_BACKUP_DIR/db-pre-$current_name.sql.gz" ]; then
+  log "etat d'avant la release annulee : make db-restore DUMP=db-pre-$current_name.sql.gz"
 fi
 
 # =============================================================================
@@ -46,6 +42,7 @@ cd "$CURRENT_LINK" || die "current inaccessible apres bascule"
 "$PHP_BIN" artisan optimize:clear
 "$PHP_BIN" artisan view:cache    || warn "view:cache ignore"
 "$PHP_BIN" artisan queue:restart || warn "queue:restart ignore"
+restart_workers
 
 maintenance_off
 ok "site remis en ligne"

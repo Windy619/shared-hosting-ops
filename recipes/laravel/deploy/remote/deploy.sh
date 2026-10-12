@@ -68,7 +68,7 @@ ok "dependances PHP installees"
 
 if [ "$DB_BACKUP" = "1" ]; then
   phase "sauvegarde de la base (avant migrations)"
-  db_backup
+  db_backup pre "$RELEASE_NAME"
 fi
 
 # =============================================================================
@@ -113,15 +113,17 @@ else
   log "config:cache / route:cache desactives (ENABLE_CONFIG_CACHE=1 pour les activer)"
 fi
 
-# queue:restart demande aux workers de s'arreter proprement en fin de job ;
-# supervisor les relance avec le nouveau code. Aucun sudo necessaire.
+# Les deux sont complementaires : queue:restart demande aux workers de finir
+# leur job en cours, restart_workers garantit qu'ils repartent sur le nouveau
+# code au lieu de dependre de la politique autorestart de Supervisor.
 "$PHP_BIN" artisan queue:restart || warn "queue:restart ignore"
+restart_workers
 
 maintenance_off
 ok "site remis en ligne"
 
 cleanup_releases
-log_revision "deploy" "$RELEASE_NAME"
+log_revision "deploy" "$RELEASE_NAME" "${LAST_DUMP:-}"
 
 SUCCESS=1
 printf '\n  Deploiement termine : %s\n' "$RELEASE_NAME"
