@@ -68,7 +68,7 @@ ok "dependances PHP installees"
 
 if [ "$DB_BACKUP" = "1" ]; then
   phase "sauvegarde de la base (avant migrations)"
-  db_backup
+  db_backup pre "$RELEASE_NAME"
 fi
 
 # =============================================================================
@@ -123,7 +123,7 @@ maintenance_off
 ok "site remis en ligne"
 
 cleanup_releases
-log_revision "deploy" "$RELEASE_NAME"
+log_revision "deploy" "$RELEASE_NAME" "${LAST_DUMP:-}"
 
 SUCCESS=1
 printf '\n  Deploiement termine : %s\n' "$RELEASE_NAME"

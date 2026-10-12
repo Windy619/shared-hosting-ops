@@ -22,6 +22,7 @@ set -euo pipefail
 PHP_BIN="${PHP_BIN:-php}"
 COMPOSER_BIN="${COMPOSER_BIN:-composer}"
 KEEP_RELEASES="${KEEP_RELEASES:-5}"
+KEEP_DUMPS="${KEEP_DUMPS:-10}"
 DEPLOYER="${DEPLOYER:-inconnu}"
 REVISION="${REVISION:-inconnue}"
 
@@ -155,10 +156,14 @@ cleanup_releases() {
 # Capistrano : "used to log every deploy or rollback. Each entry is timestamped
 # and the executing user is listed."
 log_revision() {
-  local action="$1" release="$2" ts
+  local action="$1" release="$2" dump="${3:-}" ts line
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf '%s  %-8s  %s  %s  by %s\n' \
-    "$ts" "$action" "$release" "$REVISION" "$DEPLOYER" >> "$REVISIONS_LOG"
+  line="$(printf '%s  %-8s  %s  %s  by %s' \
+    "$ts" "$action" "$release" "$REVISION" "$DEPLOYER")"
+  # Le dump d'avant migration est note ici : c'est lui qu'on cherche au moment
+  # de decider quoi restaurer.
+  [ -z "$dump" ] || line="$line  dump $dump"
+  printf '%s\n' "$line" >> "$REVISIONS_LOG"
   ok "revisions.log mis a jour"
 }
 
@@ -221,26 +226,59 @@ restart_workers() {
 }
 
 # --- Sauvegarde SQL ----------------------------------------------------------
+# Trois familles de dumps, chacune avec son prefixe et sa rotation :
+#   db-pre-<release>.sql.gz     avant migration, nomme d'apres la release deployee
+#   db-manual-<horodatage>      make db-backup
+#   db-safety-<horodatage>      juste avant une restauration, jamais elague
+# Une rotation commune laissait les dumps manuels chasser ceux d'avant migration.
+# Les dumps vivent sur le meme serveur que la base : un filet avant migration,
+# pas une sauvegarde contre la perte du serveur.
+
+# Identifiants lus dans shared/.env. $1 = client requis (mysql, mysqldump).
+db_load_conf() {
+  DB_NAME="$(env_get DB_DATABASE || true)"
+  [ -n "${DB_NAME:-}" ] || die "DB_DATABASE absent de shared/.env"
+  command -v "$1" >/dev/null 2>&1 || die "$1 introuvable sur le serveur"
+  DB_USER="$(env_get DB_USERNAME || true)"
+  DB_HOST="$(env_get DB_HOST || true)"
+  DB_PORT="$(env_get DB_PORT || true)"
+  DB_PASS="$(env_get DB_PASSWORD || true)"
+}
+
+# MYSQL_PWD plutot que -p... : le mot de passe n'apparait pas dans ps.
+db_mysql() {
+  MYSQL_PWD="$DB_PASS" mysql -h "${DB_HOST:-127.0.0.1}" -P "${DB_PORT:-3306}" \
+    -u "$DB_USER" "$DB_NAME" "$@"
+}
+
+# Un gzip de flux vide pese ~20 octets : "test -s" ne prouve donc RIEN.
+# gzip -t detecte une archive tronquee, le marqueur de fin de mysqldump un
+# dump interrompu avant la derniere ligne.
+db_dump_check() {
+  gzip -t "$1" 2>/dev/null || return 1
+  gunzip -c "$1" | tail -n 5 | grep -q 'Dump completed'
+}
+
+# Conserve les KEEP_DUMPS plus recents d'un prefixe, les autres prefixes sont
+# intacts.
+db_rotate() {
+  local kind="$1" f
+  # shellcheck disable=SC2012  # noms generes ici, sans espace : ls est sur
+  ls -1t "$DB_BACKUP_DIR"/db-"$kind"-*.sql.gz 2>/dev/null | tail -n +"$((KEEP_DUMPS + 1))" \
+    | while read -r f; do rm -f "$f"; done
+}
+
+# $1 = pre | manual | safety, $2 = suffixe du nom (release, ou horodatage).
+# Le nom du dump est laisse dans LAST_DUMP pour revisions.log.
 db_backup() {
-  local name user host port pass f
+  local kind="${1:-manual}" label="${2:-$(date -u +%Y%m%d%H%M%S)}" f
 
-  name="$(env_get DB_DATABASE || true)"
-  if [ -z "${name:-}" ]; then
-    warn "DB_DATABASE absent de shared/.env : dump ignore"
-    return 0
-  fi
-  if ! command -v mysqldump >/dev/null 2>&1; then
-    warn "mysqldump introuvable sur le serveur : dump ignore"
-    return 0
-  fi
-
-  user="$(env_get DB_USERNAME || true)"
-  host="$(env_get DB_HOST || true)"
-  port="$(env_get DB_PORT || true)"
-  pass="$(env_get DB_PASSWORD || true)"
+  [[ "$KEEP_DUMPS" =~ ^[1-9][0-9]*$ ]] || die "KEEP_DUMPS invalide : '$KEEP_DUMPS' (entier >= 1 attendu)"
+  db_load_conf mysqldump
 
   mkdir -p "$DB_BACKUP_DIR"
-  f="$DB_BACKUP_DIR/db-$(date -u +%Y%m%d%H%M%S).sql.gz"
+  f="$DB_BACKUP_DIR/db-$kind-$label.sql.gz"
+  [ ! -e "$f" ] || die "dump deja present : $(basename "$f")"
 
   # Le dump est restreint AVANT d'etre rempli. Un chmod applique apres coup
   # laissait le fichier lisible par tous pendant toute la duree du mysqldump,
@@ -248,56 +286,81 @@ db_backup() {
   : > "$f"
   chmod 600 "$f"
 
-  # MYSQL_PWD plutot que -p... : le mot de passe n'apparait pas dans ps.
   # pipefail (actif via set -o pipefail) fait remonter l'echec de mysqldump
   # meme si gzip, lui, reussit.
-  MYSQL_PWD="$pass" mysqldump \
+  MYSQL_PWD="$DB_PASS" mysqldump \
       --no-tablespaces --single-transaction --quick --routines --events \
       --default-character-set=utf8mb4 \
-      -h "${host:-127.0.0.1}" -P "${port:-3306}" -u "$user" "$name" \
+      -h "${DB_HOST:-127.0.0.1}" -P "${DB_PORT:-3306}" -u "$DB_USER" "$DB_NAME" \
     | gzip -9 > "$f" \
     || { rm -f "$f"; die "mysqldump a echoue"; }
 
-  # Un gzip de flux vide pese ~20 octets : "test -s" ne prouve donc RIEN.
-  # Seul le marqueur de fin de mysqldump atteste d'un dump complet.
-  if ! gunzip -c "$f" | tail -n 5 | grep -q 'Dump completed'; then
+  if ! db_dump_check "$f"; then
     rm -f "$f"
-    die "dump incomplet : marqueur 'Dump completed' absent"
+    die "dump incomplet : archive invalide ou marqueur 'Dump completed' absent"
   fi
 
-  chmod 600 "$f"
-  ok "dump : $(basename "$f") ($(du -h "$f" | cut -f1))"
+  LAST_DUMP="$(basename "$f")"
+  ok "dump : $LAST_DUMP ($(du -h "$f" | cut -f1))"
 
-  # Rotation : 10 dumps conserves.
-  # shellcheck disable=SC2012  # noms horodates, sans espace : ls est sur ici
-  ls -1t "$DB_BACKUP_DIR"/db-*.sql.gz 2>/dev/null | tail -n +11 | while read -r f; do
-    rm -f "$f"
-  done
+  [ "$kind" = "safety" ] || db_rotate "$kind"
+}
+
+# --- Choix du dump a restaurer -----------------------------------------------
+# $1 = nom de fichier dans backup/ (DUMP). Vide : le plus recent des dumps
+# avant migration et manuels. Un dump de securite ne se restaure que sur
+# demande explicite, c'est l'annulation de la restauration precedente.
+db_pick_dump() {
+  local want="${1:-}" f
+
+  if [ -n "$want" ]; then
+    case "$want" in
+      */*|*..*) die "DUMP est un nom de fichier de backup/, pas un chemin : $want" ;;
+      db-*.sql.gz) ;;
+      *) die "DUMP invalide : attendu db-....sql.gz, recu $want" ;;
+    esac
+    [ -f "$DB_BACKUP_DIR/$want" ] || die "dump introuvable dans backup/ : $want"
+    printf '%s\n' "$DB_BACKUP_DIR/$want"
+    return 0
+  fi
+
+  # shellcheck disable=SC2012  # noms generes ici, sans espace : ls est sur
+  f="$(ls -1t "$DB_BACKUP_DIR"/db-pre-*.sql.gz "$DB_BACKUP_DIR"/db-manual-*.sql.gz 2>/dev/null \
+        | head -n 1 || true)"
+  [ -n "${f:-}" ] || die "aucun dump disponible dans backup/"
+  printf '%s\n' "$f"
 }
 
 # --- Restauration SQL (destructive, jamais automatique) ----------------------
-db_restore_latest() {
-  local name user host port pass f
+# $1 = chemin du dump. Appelee en maintenance par db-restore.sh : le site et
+# les workers ne doivent pas ecrire dans une base en cours de remplacement.
+db_restore() {
+  local f="$1" safety q
 
-  # shellcheck disable=SC2012  # noms horodates generes ici, sans espace
-  f="$(ls -1t "$DB_BACKUP_DIR"/db-*.sql.gz 2>/dev/null | head -n 1 || true)"
-  [ -n "${f:-}" ] || die "aucun dump disponible dans backup/"
+  db_load_conf mysql
 
-  name="$(env_get DB_DATABASE || true)"
-  [ -n "${name:-}" ] || die "DB_DATABASE absent de shared/.env"
-  command -v mysql >/dev/null 2>&1 || die "client mysql introuvable"
+  # Rien n'est envoye a mysql tant que le fichier n'est pas prouve complet :
+  # une archive tronquee serait sinon appliquee en partie avant l'echec.
+  db_dump_check "$f" \
+    || die "dump illisible ou incomplet : $(basename "$f") (gzip -t ou marqueur 'Dump completed'). Base intacte."
 
-  user="$(env_get DB_USERNAME || true)"
-  host="$(env_get DB_HOST || true)"
-  port="$(env_get DB_PORT || true)"
-  pass="$(env_get DB_PASSWORD || true)"
-
-  warn "RESTAURATION de $(basename "$f") dans la base $name"
+  warn "RESTAURATION de $(basename "$f") dans la base $DB_NAME"
   warn "Toute donnee ecrite depuis ce dump sera PERDUE."
 
-  gunzip -c "$f" \
-    | MYSQL_PWD="$pass" mysql -h "${host:-127.0.0.1}" -P "${port:-3306}" -u "$user" "$name" \
-    || die "restauration echouee"
+  db_backup safety
+  safety="$LAST_DUMP"
+
+  # mysqldump ne fait DROP/CREATE que pour les tables qu'il contient : celles
+  # creees par la migration fautive survivraient, et le migrate suivant
+  # echouerait sur "table already exists".
+  q="SELECT CONCAT('DROP ', IF(table_type = 'VIEW', 'VIEW', 'TABLE'), ' IF EXISTS \`', REPLACE(table_name, '\`', '\`\`'), '\`;') FROM information_schema.tables WHERE table_schema = DATABASE()"
+  { printf 'SET FOREIGN_KEY_CHECKS=0;\n'; db_mysql -N -B -e "$q"; } | db_mysql \
+    || die "vidage de la base echoue. Dump de securite : $safety"
+
+  gunzip -c "$f" | db_mysql \
+    || die "import echoue, base a moitie restauree. Dump de securite : $safety
+  Pour revenir a l'etat d'avant : DUMP=$safety"
 
   ok "base restauree depuis $(basename "$f")"
+  log "etat precedent conserve : $safety"
 }
