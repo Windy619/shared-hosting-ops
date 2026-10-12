@@ -62,8 +62,8 @@ make deploy CONFIRM=yes      # déploiement complet
 make rollback CONFIRM=yes    # retour à la release précédente
 make revisions               # journal des déploiements
 make www-audit               # docroot : liens, éléments physiques, .php suspects
-make db-backup               # dump SQL hors cycle de déploiement
-make db-restore CONFIRM=yes CONFIRM_RESTORE=RESTORE
+make db-backup               # dump SQL manuel hors cycle de déploiement
+make db-restore CONFIRM=yes CONFIRM_RESTORE=RESTORE [DUMP=db-....sql.gz]
 ```
 
 `make help` liste les cibles - l'aide est générée depuis les commentaires `##`,
@@ -144,18 +144,54 @@ Un `gzip` de flux vide pèse une vingtaine d'octets : `test -s` le déclare donc
 valide. C'est ainsi qu'un dump vide pouvait précéder une migration.
 
 `db_backup` active `pipefail`, ne masque plus les erreurs de `mysqldump`, et
-vérifie la présence du marqueur `Dump completed` en fin d'archive. Le mot de
-passe passe par `MYSQL_PWD`, jamais par `-p...`, pour ne pas apparaître dans `ps`.
+vérifie `gzip -t` puis la présence du marqueur `Dump completed` en fin d'archive.
+Le mot de passe passe par `MYSQL_PWD`, jamais par `-p...`, pour ne pas apparaître
+dans `ps`.
+
+Un dump impossible (`DB_DATABASE` absent, `mysqldump` introuvable) fait échouer
+le déploiement : on ne migre pas sans filet par accident. Pour s'en passer, il
+faut le demander : `DB_BACKUP=0`.
+
+### Trois familles de dumps
+
+| Fichier | Quand | Rotation |
+|---|---|---|
+| `db-pre-<release>.sql.gz` | avant la migration d'un déploiement, nommé d'après la release déployée | `KEEP_DUMPS` (10) |
+| `db-manual-<horodatage>.sql.gz` | `make db-backup` | `KEEP_DUMPS` (10), quota séparé |
+| `db-safety-<horodatage>.sql.gz` | juste avant une restauration | jamais élagué |
+
+Chaque quota est indépendant : des dumps manuels n'évincent plus ceux d'avant
+migration. Le nom du dump d'avant migration est noté dans `revisions.log`
+(`dump db-pre-...`). Les dumps de sécurité ne sont pas élagués : à supprimer à la
+main une fois la restauration validée.
+
+**Les dumps sont sur le même serveur que la base.** Ils servent de filet avant
+migration, pas de sauvegarde contre la perte du serveur. Une copie hors du
+serveur n'entre pas dans cette recette.
 
 ### La base n'est jamais restaurée automatiquement
 
-Un rollback restaure le code. Rejouer un dump détruirait tout ce qui a été écrit
-depuis - ce n'est pas au déploiement d'en décider. `RESTORE_DB=1` existe, et reste
-une action délibérée.
+Un rollback restaure le code, jamais la base : rejouer un dump détruirait tout ce
+qui a été écrit depuis. Code et base se restaurent séparément, chacun derrière son
+propre verrou. Après une migration destructrice, le rollback seul ne suffit pas :
+il affiche le dump `db-pre-<release>` correspondant s'il existe.
 
-C'est la limite connue du dispositif : après une migration destructrice, le
-rollback seul ne suffit pas. D'où l'intérêt du dump systématique **avant**
-migration, et de `make db-restore`.
+La restauration se fait par `make db-restore CONFIRM=yes CONFIRM_RESTORE=RESTORE`,
+ou par le job manuel `db_restore_<env>` du CI (variable `CONFIRM_RESTORE=RESTORE`
+obligatoire). `DUMP=db-....sql.gz` choisit le fichier ; par défaut, le plus récent
+des dumps avant migration et manuels. Pour revenir de deux releases, prendre dans
+`make revisions` le dump de la plus ancienne release annulée.
+
+Avant d'importer, la restauration :
+
+1. vérifie le fichier (`gzip -t`, marqueur `Dump completed`) : une archive
+   tronquée est refusée sans toucher à la base ;
+2. passe le site en maintenance ;
+3. prend un dump de sécurité de l'état courant, pour pouvoir annuler
+   (`DUMP=db-safety-...`) ;
+4. supprime toutes les tables de la base : un `mysqldump` ne fait `DROP`/`CREATE`
+   que pour ses propres tables, celles créées par la migration fautive
+   subsisteraient et le `migrate` suivant échouerait sur « table already exists ».
 
 ### Écarts assumés vis-à-vis de Capistrano
 
