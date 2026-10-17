@@ -364,3 +364,52 @@ db_restore() {
   ok "base restauree depuis $(basename "$f")"
   log "etat precedent conserve : $safety"
 }
+
+# --- Dump d'avant migration --------------------------------------------------
+# Sans current, c'est le premier deploiement : il n'y a rien a sauvegarder, et
+# exiger un dump ferait echouer un serveur neuf.
+db_backup_before_migration() {
+  [ "${DB_BACKUP:-1}" = "1" ] || return 0
+
+  if [ ! -L "$CURRENT_LINK" ]; then
+    log "premier deploiement (aucune release active) : dump d'avant migration ignore"
+    return 0
+  fi
+
+  phase "sauvegarde de la base (avant migrations)"
+  db_backup pre "$1"
+}
+
+# --- Controles de deploy:check -----------------------------------------------
+# ln -sfn sur un current qui est un vrai dossier cree le lien DANS le dossier :
+# la bascule echouerait apres les migrations.
+check_current_link() {
+  if [ -e "$CURRENT_LINK" ] && [ ! -L "$CURRENT_LINK" ]; then
+    die "current existe mais n'est pas un lien symbolique : $CURRENT_LINK
+  Deplacez-le (mv current current.old), ou supprimez-le s'il est vide, puis relancez."
+  fi
+}
+
+# Laravel passe par PDO : mysqli ne suffit pas. Vide si le driver est inconnu.
+pdo_extension() {
+  case "$1" in
+    mysql|mariadb) printf 'pdo_mysql' ;;
+    pgsql)         printf 'pdo_pgsql' ;;
+    sqlite)        printf 'pdo_sqlite' ;;
+  esac
+}
+
+# Detectee ici plutot qu'apres composer install, une fois l'archive transferee.
+check_pdo_extension() {
+  local conn ext
+  conn="$(env_get DB_CONNECTION || true)"
+  ext="$(pdo_extension "${conn:-}")"
+
+  if [ -z "$ext" ]; then
+    log "DB_CONNECTION = ${conn:-non defini} : extension PDO non verifiee"
+    return 0
+  fi
+  "$PHP_BIN" -r "exit(extension_loaded('$ext') ? 0 : 1);" \
+    || die "extension PHP $ext absente de $PHP_BIN (DB_CONNECTION=$conn)"
+  ok "extension PHP : $ext"
+}

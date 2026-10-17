@@ -152,7 +152,7 @@ variables:
     # --- Controle final -----------------------------------------------------
     # Un echo de fin ne prouve rien : on interroge le site reellement.
     - |
-      CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || echo 000)
+      CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || true)
       echo "HTTP $CODE sur https://$DOMAIN"
       case "$CODE" in
         200|301|302) echo "Site operationnel." ;;
@@ -181,7 +181,7 @@ variables:
              SUPERVISOR_GROUPS='$SUPERVISOR_GROUPS' \
              DEPLOYER='$DEPLOYER' REVISION='$REVISION' bash -s"
     - |
-      CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || echo 000)
+      CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || true)
       echo "HTTP $CODE sur https://$DOMAIN"
       case "$CODE" in 200|301|302) ;; *) exit 1 ;; esac
 
@@ -240,7 +240,7 @@ variables:
              CONFIRM_RESTORE='$CONFIRM_RESTORE' DUMP='${DUMP:-}' \
              DEPLOYER='$DEPLOYER' REVISION='$REVISION' bash -s"
     - |
-      CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || echo 000)
+      CODE=$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "https://$DOMAIN" || true)
       echo "HTTP $CODE sur https://$DOMAIN"
       case "$CODE" in 200|301|302) ;; *) exit 1 ;; esac
   dependencies: []

@@ -21,18 +21,20 @@ les deux dépend de ce que le serveur du client tolère, pas du comportement vou
 
 | Fichier d'ici | Où le déposer | Quand |
 |---|---|---|
-| `deploy/remote/*.sh` | `deploy/remote/` du projet | toujours, c'est la logique distante |
+| `deploy/remote/*.sh` | `deploy/remote/` du projet | toujours : `_lib.sh`, `check.sh`, `deploy.sh`, `rollback.sh`, `db-restore.sh` sont communs au pipeline et au Makefile |
+| `deploy/remote/make/*.sh` | `deploy/remote/make/` du projet | avec le Makefile seulement : `amen-www.sh`, `cleanup.sh`, `db-backup.sh`, `init.sh`, `revisions.sh` |
 | `.gitlab-ci.yml` | racine du projet | déploiement par pipeline GitLab |
 | `Makefile` | racine du projet | déploiement par Makefile en SSH direct |
 | `config.mk.example` | racine du projet, copié en `config.mk` | avec le Makefile, `config.mk` n'est jamais versionné |
 | `init_server.sh` | rien à copier, s'exécute une fois sur le serveur | première mise en place d'un environnement |
 
-Les deux points d'entrée partagent `deploy/remote/` : ne prendre que l'un des
-deux reste valable, laisser tomber `deploy/` ne l'est jamais.
+Pipeline GitLab seul : `.gitlab-ci.yml` et `deploy/remote/*.sh`, sans le dossier
+`make/`. Makefile seul : `Makefile`, `config.mk.example` et tout `deploy/remote/`,
+sous-dossier compris. Laisser tomber `deploy/remote/*.sh` n'est jamais valable.
 
 ```bash
 cp .gitlab-ci.yml Makefile config.mk.example <projet>/
-cp -r deploy       <projet>/
+cp -r deploy       <projet>/    # pipeline seul : supprimer ensuite deploy/remote/make/
 cd <projet> && cp config.mk.example config.mk    # puis renseigner les valeurs
 ```
 
