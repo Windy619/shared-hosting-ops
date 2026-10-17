@@ -21,6 +21,8 @@ touch "$REVISIONS_LOG"
 
 missing=0
 
+check_current_link
+
 # --- linked_files ------------------------------------------------------------
 while IFS=: read -r src dest; do
   [ -n "${src:-}" ] || continue

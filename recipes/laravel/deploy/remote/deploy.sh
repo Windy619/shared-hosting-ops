@@ -66,10 +66,7 @@ cd "$RELEASE_DIR" || die "release introuvable : $RELEASE_DIR"
   --optimize-autoloader --no-interaction --no-progress
 ok "dependances PHP installees"
 
-if [ "$DB_BACKUP" = "1" ]; then
-  phase "sauvegarde de la base (avant migrations)"
-  db_backup pre "$RELEASE_NAME"
-fi
+db_backup_before_migration "$RELEASE_NAME"
 
 # =============================================================================
 phase "deploy:publishing"

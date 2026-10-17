@@ -364,3 +364,28 @@ db_restore() {
   ok "base restauree depuis $(basename "$f")"
   log "etat precedent conserve : $safety"
 }
+
+# --- Dump d'avant migration --------------------------------------------------
+# Sans current, c'est le premier deploiement : il n'y a rien a sauvegarder, et
+# exiger un dump ferait echouer un serveur neuf.
+db_backup_before_migration() {
+  [ "${DB_BACKUP:-1}" = "1" ] || return 0
+
+  if [ ! -L "$CURRENT_LINK" ]; then
+    log "premier deploiement (aucune release active) : dump d'avant migration ignore"
+    return 0
+  fi
+
+  phase "sauvegarde de la base (avant migrations)"
+  db_backup pre "$1"
+}
+
+# --- Controles de deploy:check -----------------------------------------------
+# ln -sfn sur un current qui est un vrai dossier cree le lien DANS le dossier :
+# la bascule echouerait apres les migrations.
+check_current_link() {
+  if [ -e "$CURRENT_LINK" ] && [ ! -L "$CURRENT_LINK" ]; then
+    die "current existe mais n'est pas un lien symbolique : $CURRENT_LINK
+  Deplacez-le (mv current current.old), ou supprimez-le s'il est vide, puis relancez."
+  fi
+}
