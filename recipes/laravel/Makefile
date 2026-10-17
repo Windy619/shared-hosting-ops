@@ -137,7 +137,7 @@ check-connection: ## Verifie l'acces SSH et la version de PHP distante
 	@$(SSH) $(HOST) "echo '  Connexion OK'; $(PHP_BIN) -r 'echo \"  PHP CLI \" . PHP_VERSION . PHP_EOL;'"
 
 init: check-connection ## Prepare releases/ shared/ backup/ www/ (une seule fois)
-	@$(call remote,init.sh,EXTRA_DIRS='www')
+	@$(call remote,make/init.sh,EXTRA_DIRS='www')
 
 # =============================================================================
 build-assets: ## Compile les assets front en local (npm ci + npm run build)
@@ -195,8 +195,8 @@ deploy: guard check-connection build ## Deploie une nouvelle release
 		DB_BACKUP='$(DB_BACKUP)' ENABLE_CONFIG_CACHE='$(ENABLE_CONFIG_CACHE)')
 	@echo ""
 	@echo "[4/5] Docroot"
-	@$(call remote,amen-www.sh,MODE='link')
-	@$(call remote,amen-www.sh,MODE='init' FORCE='$(FORCE)')
+	@$(call remote,make/amen-www.sh,MODE='link')
+	@$(call remote,make/amen-www.sh,MODE='init' FORCE='$(FORCE)')
 	@echo ""
 	@echo "[5/5] Controle HTTP"
 	@$(MAKE) --no-print-directory health
@@ -205,32 +205,32 @@ deploy: guard check-connection build ## Deploie une nouvelle release
 
 rollback: guard check-connection ## Revient a la release precedente
 	@$(call remote,rollback.sh)
-	@$(call remote,amen-www.sh,MODE='link')
+	@$(call remote,make/amen-www.sh,MODE='link')
 	@$(MAKE) --no-print-directory health
 
 # =============================================================================
 link-www: ## (Re)pose les liens build/img/storage dans www (idempotent)
-	@$(call remote,amen-www.sh,MODE='link')
+	@$(call remote,make/amen-www.sh,MODE='link')
 
 www-init: ## Pose www/index.php et www/.htaccess s'ils sont absents
-	@$(call remote,amen-www.sh,MODE='init' FORCE='$(FORCE)')
+	@$(call remote,make/amen-www.sh,MODE='init' FORCE='$(FORCE)')
 
 www-audit: ## Audit du docroot : liens, elements physiques, .php suspects
-	@$(call remote,amen-www.sh,MODE='audit')
+	@$(call remote,make/amen-www.sh,MODE='audit')
 
 # =============================================================================
 db-backup: ## Dump SQL manuel compresse dans backup/
-	@$(call remote,db-backup.sh)
+	@$(call remote,make/db-backup.sh)
 
 db-restore: guard ## Restaure un dump SQL (DUMP=db-....sql.gz, le dernier par defaut) - DESTRUCTIF
 	@$(call remote,db-restore.sh,CONFIRM_RESTORE='$(CONFIRM_RESTORE)' DUMP='$(DUMP)')
 
 # =============================================================================
 clean-releases: ## Supprime les vieilles releases (garde KEEP_RELEASES dernieres)
-	@$(call remote,cleanup.sh)
+	@$(call remote,make/cleanup.sh)
 
 revisions: ## Affiche revisions.log (qui a deploye quoi, et quand)
-	@$(call remote,revisions.sh,LINES='$(or $(LINES),20)')
+	@$(call remote,make/revisions.sh,LINES='$(or $(LINES),20)')
 
 # =============================================================================
 health: ## Verifie le code HTTP de l'application

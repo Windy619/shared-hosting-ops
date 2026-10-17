@@ -120,7 +120,8 @@ recipes/                 une recette de déploiement par techno
     ├── Makefile
     ├── config.mk.example
     ├── init_server.sh
-    └── deploy/remote/*.sh   logique distante partagée
+    └── deploy/remote/       logique distante partagée
+        └── make/            scripts du Makefile seul
 docker-backup/           outil serveur, pas une recette
 aide/                    outil serveur, pas une recette
 tests/                   suites bats
