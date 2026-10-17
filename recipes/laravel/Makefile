@@ -234,7 +234,7 @@ revisions: ## Affiche revisions.log (qui a deploye quoi, et quand)
 
 # =============================================================================
 health: ## Verifie le code HTTP de l'application
-	@CODE=$$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "$(APP_URL)" 2>/dev/null || echo 000); \
+	@CODE=$$(curl -sS -o /dev/null -m 25 -w '%{http_code}' -L "$(APP_URL)" 2>/dev/null || true); \
 	echo "  HTTP $$CODE  $(APP_URL)"; \
 	case $$CODE in \
 		200|301|302) echo "  Site operationnel." ;; \

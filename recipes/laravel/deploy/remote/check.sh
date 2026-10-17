@@ -81,6 +81,8 @@ fi
   || die "composer introuvable : $COMPOSER_BIN"
 ok "composer : $COMPOSER_BIN"
 
+check_pdo_extension
+
 # --- storage inscriptible ----------------------------------------------------
 if [ -w "$SHARED_DIR/storage" ]; then
   ok "shared/storage/ inscriptible"
